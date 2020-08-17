@@ -1,5 +1,6 @@
 #include "user.h"
 #include "kernel/param.h"
+#include "kernel/fcntl.h"
 
 #define MAXARGLEN 51
 
@@ -7,44 +8,58 @@
 #define REDIR 2
 #define PIPE 3
 
-struct cmd {
-	int type;
-};
+char *start[MAXARG];
+int argc = 1;
 
-struct execcmd {
-	int type;
-	char *argv[MAXARGS];
-};
-
-struct pipecmd {
-	int type;
-	struct cmd *left;
-	struct cmd *right;
-}
-
-struct redircmd {
-	int type;
-	struct cmd *cmd; 
-	char *filename;
-	FILE fd;
-	int mode;
-}
+void execPipe(char* start[], int argc);
 
 void
-runcmd(struct cmd *cmd) {
+runcmd(char *start[], int argc) {
+	for(int i=1; i<argc; i++)
+		if(!strcmp(start[i], "|"))
+			execPipe(start, argc);
 
-switch
+	for(int i=1; i<argc; i++) {
+		if(!strcmp(start[i], ">")) {
+			close(1);
+			open(start[i+1], O_CREATE|O_WRONLY);
+			start[i] = 0;
+		}
+		if(!strcmp(start[i],"<")) {
+			close(0);
+			open(start[i+1], O_RDONLY);
+			start[i] = 0;
+		}
+	}
+	exec(start[0], start);
+}
 
-case EXEC:
-	ecmd = (struct execcmd *) cmd;
-	if(ecmd -> argv[0] == '\0')
-		exit();
-	exec(ecmd -> argv[0], ecmd -> argv);
-	fprintf(2, "exec %s failed", argv[0]);
-	break;
+void parseline(char *s) {
+	char *ps = s;
+	start[0] = s;
+	while(*ps) {
+		if(*ps == ' ' || *ps == '\n') {
+			while(*ps == ' ' || *ps == '\n') {
+				*(ps++) = 0;
+			}
+			if(*(ps)) {
+				start[argc++] = ps++;
+			}
+		}
+		else
+			ps++;
+	}
+}
 
-case PIPE:
-	pcmd = (struct pipe *)cmd;
+void execPipe(char* start[], int argc) {
+	int i=0;
+	for(; i<argc; i++) {
+		if(!strcmp(start[i], "|")) {
+			start[i] = 0;
+			break;
+		}
+	}
+
     int p[2];
 	pipe(p);
 
@@ -53,103 +68,33 @@ case PIPE:
 		dup(p[1]);
 		close(p[0]);
 		close(p[1]);
-		runcmd(pcmd->left);
+		runcmd(start, i);
 	}
 
-	if(fork() == 0) {
+	else {
 		close(0);
 		dup(p[0]);
 		close(p[1]);
 		close(p[0]);
-		runcmd(pcmd->right);
-	}
-	
-	close(p[1]);
-	close(p[0]);
-	wait();
-	wait();
-	break;
-
-exit();
-
-}
-
-struct cmd* parseline(const char *s) {
-	char *ps = s;
-	char *start[MAXARG];
-	int argc = 1;
-	start[0] = s;
-	struct cmd* cmd;
-	while(*ps) {
-		if(*ps == '|') {
-			start[argc++] = ps + 1;
-			*(ps-1) = '\0';
-		}
-		ps++;
-	}
-	for(int i=1; i<argc; i++) {
-		struct cmd* ncmd;
-		struct pipecmd p;
-		ncmd = &p;
-		ncmd->left = cmd;
-		ncmd->right = parsecmd(start[i]);
-		ncmd->type = PIPE;
-		cmd = ncmd;
+		runcmd(start+i+1, argc-i-1);
 	}
 }
-
-struct cmd* parsecmd(const char *st) {
-
-	char *op;
-	struct redircmd r;
-	memset(r, 0, sizeof(struct redircmd));
-	if((op = strchr(st, '<'))) {
-		r->type = REDIR;
-		r->file = op+1;
-		r->mode = O_RDONLY;
-		r->fd = 0;
-		(*op) = '\0';
-	}
-	else if((op = strchr(st, '>'))) {
-		r->type = REDIR;
-		r->file = op+1;
-		r->mode = O_WRONLY|O_CRETE:
-		r->fd = 1;
-		(*op) = '\0';
-	}
-
-	struct execcmd e;
-	int argc = 1;
-	e->argv[0] = st; 
-	char *tmp;
-	while(tmp = strchr(argv[argc-1], ' ')) {
-		argv[argc++] = tmp+1;
-		(*tmp) = '\0';
-	}
-
-	if(r) {
-		r->cmd = e;
-		return r;
-	}
-	return e;
-
-}
-
 
 int
 main() {
 
-    printf("@ ");
 	char bufline[MAXARG*MAXARGLEN];
 	while(1) {
+    	printf("@ ");
 		memset(bufline, 0, sizeof(bufline));
-		gets(bufline);
+		gets(bufline, sizeof(bufline));
 		if(strlen(bufline) == 0) {
 			exit();
 		}
 		bufline[strlen(bufline)-1] = '\0';
 		if(fork() == 0) {
-			runcmd(parsecmd(bufline));
+			parseline(bufline);
+			runcmd(start, argc);
 		} else {
 			wait();
 		}
